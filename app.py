@@ -1,3 +1,4 @@
+"""Set Up the Flask Microservice to summarize a PDF file """
 from flask import Flask, request, jsonify
 import fitz  # PyMuPDF
 import openai
