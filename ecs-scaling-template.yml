@@ -1,0 +1,163 @@
+#ECS Cluster creation.
+#ECS Task Definition to specify the Docker image.
+#ECS Service with Auto Scaling.
+#Auto Scaling Policies triggered by CPU and memory utilization metrics.
+#Load Balancer setup for routing traffic to the ECS tasks.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  # Create ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties: 
+      ClusterName: pdf-summarizer-cluster
+
+  # Create ECS Task Definition
+  PdfSummarizerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: pdf-summarizer-task
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: "512"  # 0.5 vCPU
+      Memory: "1024"  # 1 GB
+      ContainerDefinitions:
+        - Name: pdf-summarizer-container
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/pdf-summarizer-repo:latest"
+          Cpu: 512
+          Memory: 1024
+          Essential: true
+          PortMappings:
+            - ContainerPort: 5000
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /ecs/pdf-summarizer
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: ecs
+
+  # Create Application Load Balancer
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: PdfSummarizerALB
+      Scheme: internet-facing
+      Subnets:
+        - subnet-12345abcde  # Replace with your subnet IDs
+        - subnet-67890fghij
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP access
+      VpcId: vpc-abc123456  # Replace with your VPC ID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  # Create Target Group for ECS Tasks
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: PdfSummarizerTG
+      Port: 5000
+      Protocol: HTTP
+      VpcId: vpc-abc123456  # Replace with your VPC ID
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+
+  # Create ECS Service
+  PdfSummarizerService:
+    Type: AWS::ECS::Service
+    DependsOn: LoadBalancer
+    Properties:
+      Cluster: !Ref ECSCluster
+      DesiredCount: 3  # Start with minimum 3 containers
+      LaunchType: FARGATE
+      TaskDefinition: !Ref PdfSummarizerTaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - subnet-12345abcde
+            - subnet-67890fghij
+          SecurityGroups:
+            - !Ref LoadBalancerSecurityGroup
+      LoadBalancers:
+        - ContainerName: pdf-summarizer-container
+          ContainerPort: 5000
+          TargetGroupArn: !Ref TargetGroup
+
+  # Auto Scaling Configuration for ECS Service
+  ServiceScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: 30
+      MinCapacity: 3
+      ResourceId: !Sub "service/${ECSCluster}/${PdfSummarizerService}"
+      RoleARN: !GetAtt ECSAutoScalingRole.Arn
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  # Scaling Policy based on CPU Utilization
+  CpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: PdfSummarizerCpuScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalableTargetId: !Ref ServiceScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 50.0  # Trigger scaling at 50% CPU utilization
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+
+  # Scaling Policy based on Memory Utilization
+  MemoryScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: PdfSummarizerMemoryScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalableTargetId: !Ref ServiceScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 50.0  # Trigger scaling at 50% memory utilization
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+
+  # IAM Role for Auto Scaling
+  ECSAutoScalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: application-autoscaling.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ECSAutoScalingPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:UpdateService
+                  - ecs:DescribeServices
+                  - application-autoscaling:*
+                Resource: "*"
+
+  # CloudWatch Logs Group for ECS Logs
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/pdf-summarizer
+      RetentionInDays: 14
