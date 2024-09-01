@@ -1,0 +1,32 @@
+#Create an ECR Repository with CloudFormation
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  PdfSummarizerRepository:
+    Type: "AWS::ECR::Repository"
+    Properties: 
+      RepositoryName: "pdf-summarizer-repo"
+      ImageScanningConfiguration:
+        scanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Expire untagged images after 30 days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 30
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+
+#Deploy the CloudFormation stack to create the ECR repository
+#Build and Tag the Docker Image of the pdf summarizer 
+#Push the Docker Image to ECR
