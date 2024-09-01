@@ -161,3 +161,4 @@ Resources:
     Properties:
       LogGroupName: /ecs/pdf-summarizer
       RetentionInDays: 14
+#Deploy the CloudFormation stack:
